@@ -1,0 +1,35 @@
+services:
+  ctfd:
+    image: ctfd/ctfd:latest
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - SECRET_KEY=change_this_to_a_long_random_string
+      - UPLOAD_FOLDER=/var/uploads
+      - DATABASE_URL=mysql+pymysql://ctfd:ctfd@db/ctfd
+      - REDIS_URL=redis://cache:6379
+    depends_on:
+      - db
+      - cache
+    volumes:
+      - ctfd_uploads:/var/uploads
+
+  db:
+    image: mariadb:10.11
+    restart: always
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpass
+      - MYSQL_USER=ctfd
+      - MYSQL_PASSWORD=ctfd
+      - MYSQL_DATABASE=ctfd
+    volumes:
+      - ctfd_db:/var/lib/mysql
+
+  cache:
+    image: redis:alpine
+    restart: always
+
+volumes:
+  ctfd_uploads:
+  ctfd_db:
