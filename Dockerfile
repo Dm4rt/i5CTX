@@ -15,4 +15,4 @@ USER 1001
 ENTRYPOINT []
 
 # Start Gunicorn directly (Listens on Port 8000)
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "-w", "4", "CTFd:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "-w", "1", "--timeout", "200", "CTFd:create_app()"]
