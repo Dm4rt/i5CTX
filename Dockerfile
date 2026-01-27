@@ -9,4 +9,4 @@ USER 1001
 # Bypass strict entrypoint
 ENTRYPOINT []
 
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "-w", "1", "-k", "gthread", "--threads", "4", "--timeout", "200", "--no-sendfile", "CTFd:create_app()"]
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "-w", "1", "-k", "gthread", "--threads", "2", "--worker-tmp-dir", "/dev/shm", "--timeout", "200", "--no-sendfile", "CTFd:create_app()"]
