@@ -1,3 +1,6 @@
+{% extends "base.html" %}
+
+{% block content %}
 <div class="container mt-5">
   <h2>Global Flag Submission</h2>
 
@@ -11,3 +14,4 @@
 </div>
 
 <script src="{{ url_for('global_submit.static', filename='global_submit.js') }}"></script>
+{% endblock %}
