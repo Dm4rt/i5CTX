@@ -1,8 +1,8 @@
 from datetime import datetime
 
 from flask import Blueprint, jsonify, render_template, request
-
 from CTFd.models import Challenges, Fails, Flags, Solves, db
+from CTFd.plugins.flags import get_flag_class
 from CTFd.utils.decorators import authed_only
 from CTFd.utils.user import get_current_user
 
@@ -30,12 +30,15 @@ def submit_global_flag():
     user = get_current_user()
 
     matched_flag = None
+
     for flag in Flags.query.all():
         try:
-            if flag.compare(submission):
+            flag_class = get_flag_class(flag.type)
+            if flag_class and flag_class.compare(flag, submission):
                 matched_flag = flag
                 break
-        except Exception:
+        except Exception as e:
+            print(f"[global_submit] flag compare failed for flag {getattr(flag, 'id', 'unknown')}: {e}")
             continue
 
     if matched_flag is None:
@@ -84,6 +87,7 @@ def submit_global_flag():
 
 
 @global_submit.route("/global-submit", methods=["GET"])
+@authed_only
 def global_submit_page():
     return render_template("global_submit.html")
 
