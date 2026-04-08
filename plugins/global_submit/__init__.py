@@ -90,7 +90,6 @@ def submit_global_flag():
             },
         }), 403
 
-    # Real already-solved check
     if model.__name__ == "Teams":
         existing = Solves.query.filter_by(team_id=team.id, challenge_id=challenge.id).first()
     else:
@@ -110,26 +109,26 @@ def submit_global_flag():
     chal_class = get_chal_class(challenge.type)
 
     class RequestShim:
-    def __init__(self, original_request, submission_value, challenge_id):
-        self.remote_addr = original_request.remote_addr
-        self.access_route = original_request.access_route
-        self.headers = original_request.headers
-        self.method = "POST"
-        self.path = original_request.path
-        self.args = original_request.args
-        self.cookies = original_request.cookies
-        self.form = {
-            "submission": submission_value,
-            "challenge_id": challenge_id,
-        }
-        self._json = {
-            "submission": submission_value,
-            "challenge_id": challenge_id,
-        }
-        self.is_json = True
+        def __init__(self, original_request, submission_value, challenge_id):
+            self.remote_addr = original_request.remote_addr
+            self.access_route = original_request.access_route
+            self.headers = original_request.headers
+            self.method = "POST"
+            self.path = original_request.path
+            self.args = original_request.args
+            self.cookies = original_request.cookies
+            self.form = {
+                "submission": submission_value,
+                "challenge_id": challenge_id,
+            }
+            self._json = {
+                "submission": submission_value,
+                "challenge_id": challenge_id,
+            }
+            self.is_json = True
 
-    def get_json(self, *args, **kwargs):
-        return self._json
+        def get_json(self, *args, **kwargs):
+            return self._json
 
     shim_request = RequestShim(request, submission, challenge.id)
 
