@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, render_template, request
-from CTFd.models import Challenges, Flags
+from CTFd.models import Challenges, Flags, Solves
 from CTFd.plugins.challenges import get_chal_class
 from CTFd.plugins.flags import get_flag_class
 from CTFd.utils.decorators import authed_only
@@ -36,8 +36,8 @@ def submit_global_flag():
 
     user = get_current_user()
     team = get_current_team()
-
     model = get_model()
+
     if model.__name__ == "Teams" and team is None:
         return jsonify({
             "success": True,
@@ -56,10 +56,7 @@ def submit_global_flag():
                 matched_flag = flag
                 break
         except Exception as e:
-            print(
-                f"[global_submit] flag compare failed for flag "
-                f"{getattr(flag, 'id', 'unknown')}: {e}"
-            )
+            print(f"[global_submit] flag compare failed for flag {getattr(flag, 'id', 'unknown')}: {e}")
             continue
 
     if matched_flag is None:
@@ -93,6 +90,23 @@ def submit_global_flag():
             },
         }), 403
 
+    # Real already-solved check
+    if model.__name__ == "Teams":
+        existing = Solves.query.filter_by(team_id=team.id, challenge_id=challenge.id).first()
+    else:
+        existing = Solves.query.filter_by(user_id=user.id, challenge_id=challenge.id).first()
+
+    if existing:
+        return jsonify({
+            "success": True,
+            "data": {
+                "status": "already_solved",
+                "message": "Already solved",
+                "challenge": challenge.name,
+                "challenge_id": challenge.id,
+            },
+        }), 200
+
     chal_class = get_chal_class(challenge.type)
 
     class RequestShim:
@@ -118,7 +132,7 @@ def submit_global_flag():
         print(f"[global_submit] challenge attempt failed for challenge {challenge.id}: {e}")
         return jsonify({
             "success": False,
-            "message": "Challenge processing failed",
+            "message": f"Challenge attempt failed: {e}",
         }), 500
 
     if isinstance(response, tuple):
@@ -150,16 +164,11 @@ def submit_global_flag():
             }), 200
 
         except Exception as e:
-            print(f"[global_submit] solve failed or already solved for challenge {challenge.id}: {e}")
+            print(f"[global_submit] solve failed for challenge {challenge.id}: {e}")
             return jsonify({
-                "success": True,
-                "data": {
-                    "status": "already_solved",
-                    "message": message or "Already solved",
-                    "challenge": challenge.name,
-                    "challenge_id": challenge.id,
-                },
-            }), 200
+                "success": False,
+                "message": f"Solve failed: {e}",
+            }), 500
 
     elif status == "partial":
         try:
@@ -173,6 +182,10 @@ def submit_global_flag():
             clear_challenges()
         except Exception as e:
             print(f"[global_submit] partial handler failed for challenge {challenge.id}: {e}")
+            return jsonify({
+                "success": False,
+                "message": f"Partial solve failed: {e}",
+            }), 500
 
         return jsonify({
             "success": True,
