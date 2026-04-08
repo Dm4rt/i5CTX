@@ -5,13 +5,13 @@
   <h2>Global Flag Submission</h2>
 
   <input id="flag-input" class="form-control" placeholder="flag{...}" />
-
-  <button id="submit-btn" class="btn btn-primary mt-3">
-    Submit
-  </button>
+  <button id="submit-btn" class="btn btn-primary mt-3">Submit</button>
 
   <div id="result" class="mt-3"></div>
 </div>
+{% endblock %}
 
+{% block scripts %}
+{{ super() }}
 <script src="{{ url_for('global_submit.static', filename='global_submit.js') }}"></script>
 {% endblock %}
