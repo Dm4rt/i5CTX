@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, jsonify, render_template, request, current_app
 from CTFd.models import Challenges, Flags, Solves
 from CTFd.plugins.challenges import get_chal_class
 from CTFd.plugins.flags import get_flag_class
@@ -19,6 +19,49 @@ def normalize_flag(value):
     return (value or "").strip()
 
 
+def parse_attempt_response(response):
+    """
+    Normalize various CTFd challenge attempt response formats.
+    """
+    if isinstance(response, tuple):
+        status = response[0] if len(response) > 0 else None
+        message = response[1] if len(response) > 1 else ""
+        return status, message
+
+    if isinstance(response, dict):
+        data = response.get("data", {})
+        status = data.get("status", response.get("status"))
+        message = data.get("message", response.get("message", ""))
+        return status, message
+
+    status = getattr(response, "status", None)
+    message = getattr(response, "message", "")
+    return status, message
+
+
+class RequestShim:
+    def __init__(self, original_request, submission_value, challenge_id):
+        self.remote_addr = original_request.remote_addr
+        self.access_route = original_request.access_route
+        self.headers = original_request.headers
+        self.method = "POST"
+        self.path = original_request.path
+        self.args = original_request.args
+        self.cookies = original_request.cookies
+        self.form = {
+            "submission": submission_value,
+            "challenge_id": str(challenge_id),
+        }
+        self._json = {
+            "submission": submission_value,
+            "challenge_id": challenge_id,
+        }
+        self.is_json = True
+
+    def get_json(self, *args, **kwargs):
+        return self._json
+
+
 @global_submit.route("/api/v1/global-submit", methods=["POST"])
 @authed_only
 def submit_global_flag():
@@ -27,7 +70,7 @@ def submit_global_flag():
 
     if not submission:
         return jsonify({
-            "success": True,
+            "success": False,
             "data": {
                 "status": "incorrect",
                 "message": "No flag provided",
@@ -40,7 +83,7 @@ def submit_global_flag():
 
     if model.__name__ == "Teams" and team is None:
         return jsonify({
-            "success": True,
+            "success": False,
             "data": {
                 "status": "authentication_required",
                 "message": "You must be on a team to submit flags.",
@@ -49,15 +92,26 @@ def submit_global_flag():
 
     matched_flag = None
 
-    for flag in Flags.query.all():
-        try:
-            flag_class = get_flag_class(flag.type)
-            if flag_class and flag_class.compare(flag, submission):
-                matched_flag = flag
-                break
-        except Exception as e:
-            print(f"[global_submit] flag compare failed for flag {getattr(flag, 'id', 'unknown')}: {e}")
-            continue
+    try:
+        candidate_flags = Flags.query.filter(Flags.challenge_id.isnot(None))
+        for flag in candidate_flags:
+            try:
+                flag_class = get_flag_class(flag.type)
+                if flag_class and flag_class.compare(flag, submission):
+                    matched_flag = flag
+                    break
+            except Exception:
+                current_app.logger.exception(
+                    "[global_submit] flag compare failed for flag_id=%s",
+                    getattr(flag, "id", "unknown"),
+                )
+                continue
+    except Exception:
+        current_app.logger.exception("[global_submit] flag lookup failed")
+        return jsonify({
+            "success": False,
+            "message": "Flag lookup failed",
+        }), 500
 
     if matched_flag is None:
         return jsonify({
@@ -75,13 +129,14 @@ def submit_global_flag():
             "message": "Challenge not found",
         }), 404
 
-    if getattr(challenge, "state", None) == "hidden":
+    challenge_state = getattr(challenge, "state", None)
+    if challenge_state == "hidden":
         return jsonify({
             "success": False,
             "message": "Challenge not found",
         }), 404
 
-    if getattr(challenge, "state", None) == "locked":
+    if challenge_state == "locked":
         return jsonify({
             "success": True,
             "data": {
@@ -107,46 +162,26 @@ def submit_global_flag():
         }), 200
 
     chal_class = get_chal_class(challenge.type)
-
-    class RequestShim:
-        def __init__(self, original_request, submission_value, challenge_id):
-            self.remote_addr = original_request.remote_addr
-            self.access_route = original_request.access_route
-            self.headers = original_request.headers
-            self.method = "POST"
-            self.path = original_request.path
-            self.args = original_request.args
-            self.cookies = original_request.cookies
-            self.form = {
-                "submission": submission_value,
-                "challenge_id": challenge_id,
-            }
-            self._json = {
-                "submission": submission_value,
-                "challenge_id": challenge_id,
-            }
-            self.is_json = True
-
-        def get_json(self, *args, **kwargs):
-            return self._json
+    if not chal_class:
+        return jsonify({
+            "success": False,
+            "message": f"Unsupported challenge type: {challenge.type}",
+        }), 500
 
     shim_request = RequestShim(request, submission, challenge.id)
 
     try:
         response = chal_class.attempt(challenge, shim_request)
-    except Exception as e:
-        print(f"[global_submit] challenge attempt failed for challenge {challenge.id}: {e}")
+        status, message = parse_attempt_response(response)
+    except Exception:
+        current_app.logger.exception(
+            "[global_submit] challenge attempt failed for challenge_id=%s",
+            challenge.id,
+        )
         return jsonify({
             "success": False,
-            "message": f"Challenge attempt failed: {e}",
+            "message": "Challenge attempt failed",
         }), 500
-
-    if isinstance(response, tuple):
-        status = response[0]
-        message = response[1] if len(response) > 1 else ""
-    else:
-        status = getattr(response, "status", None)
-        message = getattr(response, "message", "")
 
     if status == "correct" or status is True:
         try:
@@ -168,15 +203,17 @@ def submit_global_flag():
                     "challenge_id": challenge.id,
                 },
             }), 200
-
-        except Exception as e:
-            print(f"[global_submit] solve failed for challenge {challenge.id}: {e}")
+        except Exception:
+            current_app.logger.exception(
+                "[global_submit] solve failed for challenge_id=%s",
+                challenge.id,
+            )
             return jsonify({
                 "success": False,
-                "message": f"Solve failed: {e}",
+                "message": "Solve failed",
             }), 500
 
-    elif status == "partial":
+    if status == "partial":
         try:
             chal_class.partial(
                 user=user,
@@ -186,11 +223,14 @@ def submit_global_flag():
             )
             clear_standings()
             clear_challenges()
-        except Exception as e:
-            print(f"[global_submit] partial handler failed for challenge {challenge.id}: {e}")
+        except Exception:
+            current_app.logger.exception(
+                "[global_submit] partial handler failed for challenge_id=%s",
+                challenge.id,
+            )
             return jsonify({
                 "success": False,
-                "message": f"Partial solve failed: {e}",
+                "message": "Partial solve failed",
             }), 500
 
         return jsonify({
@@ -203,26 +243,28 @@ def submit_global_flag():
             },
         }), 200
 
-    else:
-        try:
-            chal_class.fail(
-                user=user,
-                team=team,
-                challenge=challenge,
-                request=shim_request,
-            )
-            clear_standings()
-            clear_challenges()
-        except Exception as e:
-            print(f"[global_submit] fail handler failed for challenge {challenge.id}: {e}")
+    try:
+        chal_class.fail(
+            user=user,
+            team=team,
+            challenge=challenge,
+            request=shim_request,
+        )
+        clear_standings()
+        clear_challenges()
+    except Exception:
+        current_app.logger.exception(
+            "[global_submit] fail handler failed for challenge_id=%s",
+            challenge.id,
+        )
 
-        return jsonify({
-            "success": True,
-            "data": {
-                "status": "incorrect",
-                "message": message or "Incorrect flag",
-            },
-        }), 200
+    return jsonify({
+        "success": True,
+        "data": {
+            "status": "incorrect",
+            "message": message or "Incorrect flag",
+        },
+    }), 200
 
 
 @global_submit.route("/global-submit", methods=["GET"])
